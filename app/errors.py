@@ -48,6 +48,20 @@ class Conflict(FieldmapError):
     label = "记录冲突"
 
 
+class AliasRevisionStale(FieldmapError):
+    """别名规则已更新，旧演练结果不能再拿来发布。"""
+    status = 409
+    code = "ALIAS_REVISION_STALE"
+    label = "演练已失效"
+
+
+class PublishFailed(FieldmapError):
+    """裁决写入失败；事务已回滚，目录仍可读上一版。"""
+    status = 500
+    code = "PUBLISH_FAILED"
+    label = "发布失败"
+
+
 def install(app: FastAPI) -> None:
     @app.exception_handler(FieldmapError)
     async def _handle_domain(_: Request, exc: FieldmapError) -> JSONResponse:

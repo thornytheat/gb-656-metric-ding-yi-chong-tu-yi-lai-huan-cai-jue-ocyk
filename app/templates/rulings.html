@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% block title %}裁决版本 · metricgraph{% endblock %}
+{% block body %}
+<section class="doc-section">
+  <h1>裁决版本</h1>
+  <p class="lede">已发布 <span class="mono">{{ rulings|length }}</span>　演练 <span class="mono">{{ dry_runs|length }}</span>{% if selected %}　当前查看 <span class="mono">v{{ selected.ruling_seq }}</span>{% endif %}</p>
+
+  {% if page_error %}
+  <p class="empty">{{ page_error }}</p>
+  {% endif %}
+
+  {% if rulings %}
+  <div class="actions">
+    <form method="get" action="/rulings" class="field-inline">
+      <label class="field-label" for="version-pick">裁决版本</label>
+      <select class="select" id="version-pick" name="version" onchange="this.form.submit()">
+        {% for item in rulings %}
+        <option value="{{ item.ruling_seq }}"{% if selected and item.ruling_seq == selected.ruling_seq %} selected{% endif %}>v{{ item.ruling_seq }} · {{ item.revision_id or item.ruling_id }}</option>
+        {% endfor %}
+      </select>
+    </form>
+    {% if selected %}
+    <a class="btn" href="/api/rulings/{{ selected.ruling_seq }}/catalog.csv">目录 CSV</a>
+    <a class="btn ghost" href="/api/rulings/{{ selected.ruling_seq }}/aliases.csv">别名 CSV</a>
+    <a class="btn ghost" href="/api/rulings/{{ selected.ruling_seq }}">版本 JSON</a>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="empty">还没有已发布的裁决版本。</p>
+  {% endif %}
+</section>
+
+{% if selected %}
+<section class="doc-section">
+  <h2><span class="clause">2</span>版本对照</h2>
+  <div class="split">
+    <div>
+      <h3>修订前</h3>
+      <dl class="ledger">
+        <div><dt>来源</dt><dd>{{ selected.base_aliases.sha256[:12] }}</dd></div>
+        <div><dt>冲突</dt><dd>{{ selected.base_view.conflict_count }}</dd></div>
+        <div><dt>环</dt><dd>{{ selected.base_view.cycle_count }}</dd></div>
+        <div><dt>采用</dt><dd>{{ selected.base_view.chosen_count }}</dd></div>
+      </dl>
+    </div>
+    <div>
+      <h3>修订后（本版）</h3>
+      <dl class="ledger">
+        <div><dt>来源</dt><dd>{{ selected.aliases_sha256[:12] }}</dd></div>
+        <div><dt>冲突</dt><dd>{{ selected.view.conflict_count }}</dd></div>
+        <div><dt>环</dt><dd>{{ selected.view.cycle_count }}</dd></div>
+        <div><dt>采用</dt><dd>{{ selected.view.chosen_count }}</dd></div>
+      </dl>
+    </div>
+  </div>
+  <p class="lede">受影响指标 <span class="mono">{{ selected.diff.affected_count }}</span>　歧义待处理 <span class="mono">{{ selected.pending|length }}</span>　规则摘要 <span class="mono" title="{{ selected.rule_sha256 }}">{{ selected.rule_sha256[:12] }}</span></p>
+</section>
+
+<section class="doc-section">
+  <h2><span class="clause">3</span>受影响指标（修订前后）</h2>
+  <div class="wrap-scroll">
+    <table>
+      <thead>
+        <tr><th>指标</th><th>版本</th><th>变化</th><th>正名 前 → 后</th><th>依赖 前 → 后</th><th>采用依据</th></tr>
+      </thead>
+      <tbody>
+        {% for item in selected.diff.affected %}
+        <tr>
+          <td class="name">{{ item.name }}</td>
+          <td class="name">{{ item.version }}</td>
+          <td class="reason">{{ item.changes|join('、') }}</td>
+          <td class="name">{{ item.before.canonical_name or '—' }} → {{ item.after.canonical_name or '—' }}</td>
+          <td class="name">{{ item.before.depends_on|join('，') or '—' }} → {{ item.after.depends_on|join('，') or '—' }}</td>
+          <td class="reason">{{ item.basis|join('；') or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6">修订前后没有受影响指标。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="doc-section">
+  <h2><span class="clause">4</span>采用依据</h2>
+  <div class="wrap-scroll">
+    <table>
+      <thead><tr><th>指标</th><th>版本</th><th>状态</th><th>来源</th><th>签名</th><th>依据</th></tr></thead>
+      <tbody>
+        {% for item in selected.view.basis %}
+        <tr>
+          <td class="name">{{ item.name }}</td>
+          <td class="name">{{ item.version }}</td>
+          <td>{% if item.status == 'chosen' %}<span class="st st-ok">采用</span>{% else %}<span class="st st-bad">冲突</span>{% endif %}</td>
+          <td class="name">{{ item.source or '—' }}</td>
+          <td class="name">{{ item.signature or '—' }}</td>
+          <td class="reason">{{ item.rule or item.reason }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="doc-section">
+  <h2><span class="clause">5</span>冲突、环与别名</h2>
+  <div class="split">
+    <div>
+      <h3>同名冲突</h3>
+      {% if selected.view.conflicts %}
+      <table>
+        <thead><tr><th>指标</th><th>版本</th><th>原因</th></tr></thead>
+        <tbody>
+          {% for item in selected.view.conflicts %}
+          <tr><td class="name">{{ item.name }}</td><td class="name">{{ item.version }}</td><td class="reason"><span class="code">{{ item.reason|reason }}</span></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="empty">没有冲突。</p>
+      {% endif %}
+    </div>
+    <div>
+      <h3>依赖环</h3>
+      {% if selected.view.cycles or selected.view.self_loops %}
+      <table>
+        <thead><tr><th>路径</th><th class="num">长度</th><th>原因</th></tr></thead>
+        <tbody>
+          {% for item in selected.view.cycles %}
+          <tr><td class="name">{{ item.basis }}</td><td class="num">{{ item.length }}</td><td class="reason"><span class="code">{{ item.reason|reason }}</span></td></tr>
+          {% endfor %}
+          {% for item in selected.view.self_loops %}
+          <tr><td class="name">{{ item.basis }}</td><td class="num">1</td><td class="reason"><span class="code">{{ item.reason|reason }}</span></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="empty">没有环。</p>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="doc-section">
+  <h2><span class="clause">6</span>别名表（本版钉住）</h2>
+  <div class="wrap-scroll">
+    <table>
+      <thead><tr><th>别名</th><th>目标</th><th>正名</th><th>状态</th><th>说明</th></tr></thead>
+      <tbody>
+        {% for row in alias_rows %}
+        <tr>
+          <td class="name">{{ row.alias }}</td>
+          <td class="name">{{ row.target or '—' }}</td>
+          <td class="name">{{ row.canonical or '—' }}</td>
+          <td>{% if row.status == 'pending' %}<span class="st st-warn">待处理</span>{% else %}<span class="st st-ok">生效</span>{% endif %}</td>
+          <td class="reason">{{ row.detail or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5">本版没有别名。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="doc-section">
+  <h2><span class="clause">7</span>指标目录（本版读取）</h2>
+  <div class="wrap-scroll">
+    <table>
+      <caption>按所选版本导出<sup class="fn">1</sup></caption>
+      <thead>
+        <tr><th>指标</th><th>正名</th><th>版本</th><th>来源</th><th>签名</th><th>依赖</th><th>采用</th><th>原因</th></tr>
+      </thead>
+      <tbody>
+        {% for row in catalog_rows %}
+        <tr>
+          <td class="name">{{ row.metric }}</td>
+          <td class="name">{{ row.canonical_name }}</td>
+          <td class="name">{{ row.version }}</td>
+          <td class="name">{{ row.source or '—' }}</td>
+          <td class="name">{{ row.signature }}</td>
+          <td class="reason">{{ row.depends_on or '—' }}</td>
+          <td>{% if row.adopted == 'Y' %}<span class="st st-ok">采用</span>{% else %}<span class="st st-bad">未采用</span>{% endif %}</td>
+          <td class="reason"><span class="code">{{ row.reason|reason }}</span></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8">没有指标。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<section class="doc-section">
+  <h2><span class="clause">8</span>演练与发布</h2>
+  <p class="lede">别名修订先演练：列出受影响指标、同名冲突、依赖环与采用依据，确认后再发布新裁决版本。发布失败整笔回滚，目录退回上一版；重试同一演练不新增版本。</p>
+  <div class="actions">
+    <button type="button" data-action="dry-run">演练样例修订</button>
+    <span class="flash" data-flash></span>
+  </div>
+  <div data-dry-result></div>
+
+  {% if dry_runs %}
+  <div class="wrap-scroll">
+    <table>
+      <thead><tr><th>演练</th><th>修订</th><th>规则摘要</th><th class="num">受影响</th><th class="num">冲突</th><th class="num">环</th><th class="num">待处理</th><th>生成</th></tr></thead>
+      <tbody>
+        {% for item in dry_runs %}
+        <tr>
+          <td class="name">{{ item.dry_run_id }}</td>
+          <td class="name">{{ item.revision_id or '—' }}</td>
+          <td class="name">{{ item.rule_sha256[:12] }}</td>
+          <td class="num">{{ item.diff.affected_count }}</td>
+          <td class="num">{{ item.after.conflict_count }}</td>
+          <td class="num">{{ item.after.cycle_count }}</td>
+          <td class="num">{{ item.pending|length }}</td>
+          <td class="name">{{ item.created_at|day }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">还没有演练。</p>
+  {% endif %}
+</section>
+
+<aside class="notes">
+  <ol class="footnotes">
+    <li>目录按所选裁决版本读取，不返工旧结论。<a class="back" href="#main">↩</a></li>
+    <li>已确认的裁决钉住当时的别名表，后续纠正不改写历史。<a class="back" href="#main">↩</a></li>
+  </ol>
+</aside>
+{% endblock %}

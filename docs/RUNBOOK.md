@@ -24,6 +24,7 @@ docker compose exec -T app python -m pytest -q
 4. `/impact` 看受影响节点、环、断链、单边登记。
 5. `/batches` 点「跑一次」，再点「陈旧提交」验证 409。
 6. `/spec` 导出迁移单与三份账目 CSV。
+7. `/rulings` 点「演练样例修订」，看受影响指标、冲突、环与采用依据；再点「发布新裁决版本」，用版本下拉对看修订前后，按所选版本导出目录 CSV。
 
 ## 4 重建数据库
 
@@ -32,7 +33,7 @@ docker compose down -v
 docker compose up -d --build
 ```
 
-命名卷 `metricgraph-data` 挂着 `/data/metricgraph.sqlite`。删卷即清空批次、快照与隔离区。
+命名卷 `metricgraph-data` 挂着 `/data/metricgraph.sqlite`。删卷即清空批次、快照与隔离区，也会清空演练与已发布的裁决版本。
 
 ## 5 接口
 
@@ -55,12 +56,20 @@ docker compose up -d --build
 | GET | `/api/export/refs.csv` | 引用账 CSV |
 | GET | `/api/export/ledger.csv` | 账目 CSV |
 | GET | `/api/export/manifest.json` | 运行清单 |
+| GET | `/api/rulings` | 裁决版本与演练列表 |
+| GET | `/api/rulings/{version}` | 某一版裁决的别名快照、视图、前后对照与目录 |
+| POST | `/api/rulings/dry-run` | 别名修订演练：受影响指标、冲突、环、采用依据 |
+| POST | `/api/rulings/publish` | 发布演练为新的裁决版本；同内容重试不新增 |
+| GET | `/api/rulings/{version}/catalog.csv` | 按所选版本导出的指标目录 |
+| GET | `/api/rulings/{version}/aliases.csv` | 按所选版本导出的别名表（含待处理） |
 
 ## 6 失败处置
 
 | 现象 | 原因 | 处置 |
 |---|---|---|
 | 409 `VERSION_STALE` | 提交带的基线序号落后 | 去掉 `base_version_seq` 或填当前序号 |
+| 409 `ALIAS_REVISION_STALE` | 演练之后别名规则又被更新 | 拿最新的演练 ID 重新发布 |
+| 500 `PUBLISH_FAILED` | 裁决写入失败，事务已回滚 | 目录仍是上一版；排查后重试同一演练即可 |
 | 400 `WINDOW_INVERTED` | 生效区间起点不早于终点 | 检查 `effective_from` / `effective_to` |
 | 400 `BAD_INPUT` | 文件名、参数或 JSON 结构不对 | 看返回的 `detail` |
 | 404 `NOT_FOUND` | 还没跑过批次 | 先在 `/batches` 点「跑一次」 |

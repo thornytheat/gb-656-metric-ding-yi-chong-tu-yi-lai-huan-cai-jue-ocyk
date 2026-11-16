@@ -1,0 +1,69 @@
+{
+  "version": "v2026_11",
+  "registered_at": "2026-11-01T00:00:00Z",
+  "aliases": [
+    {"alias": "pay", "target": "pay_amt"},
+    {"alias": "refund", "target": "refund_amt"},
+    {"alias": "net_total", "target": "net_pay", "note": "纠正：净额改为指向净额指标"},
+    {"alias": "report_old", "target": "report"},
+    {"alias": "collector_old", "target": "collector"}
+  ],
+  "definitions": [
+    {
+      "name": "gmv",
+      "version": "v2026_11",
+      "expression": "pay + refund",
+      "priority": 10,
+      "source": "finance",
+      "depends_on": ["pay_amt", "refund_amt"]
+    },
+    {
+      "name": "net_total",
+      "version": "v2026_11",
+      "expression": "pay - refund",
+      "priority": 5,
+      "source": "sales",
+      "depends_on": ["pay_amt", "refund_amt"]
+    },
+    {
+      "name": "net_pay",
+      "version": "v2026_11",
+      "expression": "pay - refund",
+      "priority": 15,
+      "source": "finance",
+      "depends_on": ["pay_amt", "refund_amt"]
+    },
+    {
+      "name": "pay_amt",
+      "version": "v2026_11",
+      "expression": "sum(pay)",
+      "priority": 20,
+      "source": "dw",
+      "depends_on": []
+    },
+    {
+      "name": "refund_amt",
+      "version": "v2026_11",
+      "expression": "sum(refund)",
+      "priority": 20,
+      "source": "dw",
+      "depends_on": []
+    },
+    {
+      "name": "report",
+      "version": "v2026_11",
+      "expression": "net_total + 1",
+      "priority": 30,
+      "source": "bi",
+      "depends_on": ["collector_old"]
+    },
+    {
+      "name": "collector",
+      "version": "v2026_11",
+      "expression": "report + 1",
+      "priority": 30,
+      "source": "bi",
+      "depends_on": ["report_old"]
+    }
+  ]
+}

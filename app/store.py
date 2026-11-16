@@ -56,6 +56,25 @@ CREATE TABLE IF NOT EXISTS kv (
     k TEXT PRIMARY KEY,
     v TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS dry_runs (
+    dry_run_id         TEXT PRIMARY KEY,
+    revision_id        TEXT,
+    rule_sha256        TEXT NOT NULL,
+    definitions_sha256 TEXT NOT NULL,
+    created_at         TEXT NOT NULL,
+    payload_json       TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rulings (
+    ruling_seq         INTEGER PRIMARY KEY,
+    publish_key        TEXT NOT NULL UNIQUE,
+    revision_id        TEXT,
+    rule_sha256        TEXT NOT NULL,
+    definitions_sha256 TEXT NOT NULL,
+    dry_run_id         TEXT NOT NULL,
+    status             TEXT NOT NULL,
+    created_at         TEXT NOT NULL,
+    payload_json       TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_quarantine_schema ON quarantine(schema_id);
 """
 
@@ -83,7 +102,7 @@ def reset() -> None:
     """测试与重建用：清空全部业务表。"""
     with _LOCK, _connect() as conn:
         conn.executescript(SCHEMA)
-        for table in ("snapshots", "runs", "quarantine", "kv"):
+        for table in ("snapshots", "runs", "quarantine", "kv", "dry_runs", "rulings"):
             conn.execute(f"DELETE FROM {table}")
 
 
@@ -256,6 +275,133 @@ def list_windows() -> list[dict]:
             "SELECT run_id, effective_from, effective_to FROM runs ORDER BY version_seq"
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+# ---------- 别名演练与裁决版本 ----------
+
+def save_dry_run(dry_run: dict) -> dict:
+    """演练按内容去重：同一份别名表 + 同一批定义只留一份。"""
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            """INSERT INTO dry_runs (dry_run_id, revision_id, rule_sha256,
+                   definitions_sha256, created_at, payload_json)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(dry_run_id) DO NOTHING""",
+            (
+                dry_run["dry_run_id"], dry_run.get("revision_id") or "",
+                dry_run["rule_sha256"], dry_run["definitions_sha256"],
+                dry_run["created_at"], _dumps(dry_run),
+            ),
+        )
+        row = conn.execute(
+            "SELECT payload_json FROM dry_runs WHERE dry_run_id=?", (dry_run["dry_run_id"],)
+        ).fetchone()
+    return _loads(row["payload_json"])
+
+
+def get_dry_run(dry_run_id: str) -> dict | None:
+    with _LOCK, _connect() as conn:
+        row = conn.execute(
+            "SELECT payload_json FROM dry_runs WHERE dry_run_id=?", (dry_run_id,)
+        ).fetchone()
+    return _loads(row["payload_json"]) if row else None
+
+
+def latest_dry_run() -> dict | None:
+    with _LOCK, _connect() as conn:
+        row = conn.execute(
+            "SELECT payload_json FROM dry_runs ORDER BY created_at DESC, dry_run_id DESC LIMIT 1"
+        ).fetchone()
+    return _loads(row["payload_json"]) if row else None
+
+
+def list_dry_runs(limit: int = 20) -> list[dict]:
+    with _LOCK, _connect() as conn:
+        rows = conn.execute(
+            """SELECT payload_json FROM dry_runs ORDER BY created_at DESC, dry_run_id DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return [_loads(row["payload_json"]) for row in rows]
+
+
+def count_dry_runs() -> int:
+    with _LOCK, _connect() as conn:
+        return int(conn.execute("SELECT COUNT(*) AS n FROM dry_runs").fetchone()["n"])
+
+
+def insert_ruling(ruling: dict) -> dict:
+    """原子写入一版裁决：序号在同一个写事务里取，失败就整笔回滚。
+
+    回滚后已有的裁决仍原样可用，所以发布失败时目录会退回上一版。
+    """
+    with _LOCK, _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            seq = int(conn.execute(
+                "SELECT COALESCE(MAX(ruling_seq), 0) + 1 AS n FROM rulings"
+            ).fetchone()["n"])
+            stored = dict(ruling, ruling_seq=seq)
+            conn.execute(
+                """INSERT INTO rulings (ruling_seq, publish_key, revision_id, rule_sha256,
+                       definitions_sha256, dry_run_id, status, created_at, payload_json)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (
+                    seq, stored["publish_key"], stored.get("revision_id") or "",
+                    stored["rule_sha256"], stored["definitions_sha256"],
+                    stored["dry_run_id"], stored.get("status") or "published",
+                    stored["created_at"], _dumps(stored),
+                ),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return stored
+
+
+def find_ruling_by_key(publish_key: str) -> dict | None:
+    with _LOCK, _connect() as conn:
+        row = conn.execute(
+            "SELECT payload_json FROM rulings WHERE publish_key=?", (publish_key,)
+        ).fetchone()
+    return _loads(row["payload_json"]) if row else None
+
+
+def ruling_by_seq(seq: int) -> dict | None:
+    with _LOCK, _connect() as conn:
+        row = conn.execute(
+            "SELECT payload_json FROM rulings WHERE ruling_seq=?", (int(seq),)
+        ).fetchone()
+    return _loads(row["payload_json"]) if row else None
+
+
+def latest_ruling() -> dict | None:
+    with _LOCK, _connect() as conn:
+        row = conn.execute(
+            "SELECT payload_json FROM rulings ORDER BY ruling_seq DESC LIMIT 1"
+        ).fetchone()
+    return _loads(row["payload_json"]) if row else None
+
+
+def list_rulings(limit: int = 30) -> list[dict]:
+    with _LOCK, _connect() as conn:
+        rows = conn.execute(
+            """SELECT payload_json FROM rulings ORDER BY ruling_seq DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return [_loads(row["payload_json"]) for row in rows]
+
+
+def count_rulings() -> int:
+    with _LOCK, _connect() as conn:
+        return int(conn.execute("SELECT COUNT(*) AS n FROM rulings").fetchone()["n"])
+
+
+def current_ruling_seq() -> int:
+    with _LOCK, _connect() as conn:
+        row = conn.execute("SELECT COALESCE(MAX(ruling_seq), 0) AS n FROM rulings").fetchone()
+    return int(row["n"])
 
 
 # ---------- 键值 ----------

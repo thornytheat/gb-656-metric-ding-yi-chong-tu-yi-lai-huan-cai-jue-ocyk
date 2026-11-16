@@ -1,0 +1,17 @@
+{
+  "version": "v2026_11",
+  "aliases": [
+    {"alias": "paid_amount", "target": "pay_amt"},
+    {"alias": "paid_amount", "target": "net_pay"}
+  ],
+  "definitions": [
+    {
+      "name": "gmv",
+      "version": "v2026_11",
+      "expression": "paid_amount + pay_amt",
+      "priority": 10,
+      "source": "finance",
+      "depends_on": ["pay_amt"]
+    }
+  ]
+}
